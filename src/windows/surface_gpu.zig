@@ -101,6 +101,12 @@ pub fn paintGpu(self: *Surface, h: w.HWND) bool {
     const ok = p.present();
     @import("surface_pace.zig").logDraw(self, (t_present - t_draw) * 1000, (clock.now() - t_present) * 1000, p.vsync);
     self.trace("gpu paint: {d}x{d} px, chain {d}x{d}, {d} draws, present 0x{x:0>8} ok={}", .{ pw, ph, p.width, p.height, self.instances.items.len, p.last_hr, ok });
+    // The canvas's pixels are not kept while the GPU draws: a frame the
+    // canvas has to draw again (translucent, or no GPU) is drawn whole.
+    if (ok and self.pixels.bytes.len > 0) {
+        self.pixels.deinit(self.gpa);
+        self.pixels = .{};
+    }
     if (!ok) {
         // The device was lost: both go, and a new pair gets the frame.
         std.log.warn("nanoui: present failed (0x{x:0>8}): the device and swap chain are made again", .{p.last_hr});

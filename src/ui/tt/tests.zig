@@ -8,6 +8,10 @@ const fontdb = @import("fontdb.zig");
 const fontmap = @import("fontmap.zig");
 const raster = @import("raster.zig");
 
+test {
+    _ = @import("tests_fallback.zig");
+}
+
 const candidates = [_][]const u8{
     "/System/Library/Fonts/Supplemental/Arial.ttf",
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",

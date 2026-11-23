@@ -42,8 +42,19 @@ const monos = (if (android) [_][]const u8{ "Droid Sans Mono", "Cutive Mono" } el
 /// Windows, macOS and Linux each name theirs. Kept ahead of the symbol
 /// fallbacks so a hanzi never lands in a partial-coverage font.
 const cjk = [_][]const u8{ "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Noto Sans SC", "Source Han Sans SC", "SimSun", "MS Gothic" };
+const symbols = [_][]const u8{ "Noto Sans", "DejaVu Sans", "Segoe UI Symbol", "Noto Sans Symbols", "Noto Sans Symbols2", "Arial Unicode MS", "Symbola" };
 /// Where characters a font lacks are looked for first.
-const fallbacks = cjk ++ [_][]const u8{ "Noto Sans", "DejaVu Sans", "Segoe UI Symbol", "Noto Sans Symbols", "Noto Sans Symbols2", "Arial Unicode MS", "Symbola" };
+const fallbacks = cjk ++ symbols;
+/// The same for characters outside the CJK blocks: there is no hanzi to keep
+/// from a partial font, and a CJK family is tens of MiB to read.
+const fallbacks_other = symbols ++ cjk;
+
+fn isCjk(cp: u21) bool {
+    return switch (cp) {
+        0x1100...0x11FF, 0x2E80...0x9FFF, 0xA960...0xA97F, 0xAC00...0xD7FF, 0xF900...0xFAFF, 0xFE30...0xFE4F, 0xFF00...0xFFEF, 0x20000...0x3FFFF => true,
+        else => false,
+    };
+}
 
 extern "c" fn getenv(name: [*:0]const u8) ?[*:0]const u8;
 
@@ -504,8 +515,10 @@ pub const Db = struct {
     }
 
     fn findFallback(db: *Db, cp: u21, weight: u16) ?u32 {
-        for (fallbacks) |n| if (db.family(n, weight, false)) |face| {
-            if (db.load(face)) |f| if (f.glyphIndex(cp) != 0) return face;
+        // Checked without being kept: the CJK candidates are tens of MiB each,
+        // and a symbol none of them has would otherwise hold them all.
+        for (if (isCjk(cp)) &fallbacks else &fallbacks_other) |n| if (db.family(n, weight, false)) |face| {
+            if (db.covers(face, cp)) return face;
         };
         // Any face at all: the loaded first, then the rest.
         var it = db.loaded.iterator();
@@ -517,18 +530,25 @@ pub const Db = struct {
             if (db.loaded.contains(@intCast(i)) or db.faces.items[i].private) continue;
             if (i > 0 and std.mem.eql(u8, db.faces.items[i - 1].style.name(), db.faces.items[i].style.name())) continue;
             tries += 1;
-            const face = db.faces.items[i];
-            var bytes = face.read(db) catch {
-                db.discardFailedFace(@intCast(i));
-                continue;
-            };
-            defer fontmap.freeBytes(db.io, db.gpa, &bytes);
-            const f = font.Font.init(bytes.data, face.index) catch {
-                db.discardFailedFace(@intCast(i));
-                continue;
-            };
-            if (f.glyphIndex(cp) != 0) return @intCast(i);
+            if (db.covers(@intCast(i), cp)) return @intCast(i);
         }
         return null;
+    }
+
+    /// Whether `face` has `cp`; a face not loaded yet is read, checked and
+    /// let go, and is loaded only once it is used.
+    fn covers(db: *Db, face: u32, cp: u21) bool {
+        if (db.loaded.get(face)) |l| return l.font.glyphIndex(cp) != 0;
+        const f = db.faces.items[face];
+        var bytes = f.read(db) catch {
+            db.discardFailedFace(face);
+            return false;
+        };
+        defer fontmap.freeBytes(db.io, db.gpa, &bytes);
+        const parsed = font.Font.init(bytes.data, f.index) catch {
+            db.discardFailedFace(face);
+            return false;
+        };
+        return parsed.glyphIndex(cp) != 0;
     }
 };
